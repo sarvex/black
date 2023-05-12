@@ -18,10 +18,7 @@ run([sys.executable, "-m", "venv", str(ENV_PATH)], check=True)
 version_specifier = VERSION
 if VERSION and VERSION[0] in "0123456789":
     version_specifier = f"=={VERSION}"
-if JUPYTER:
-    extra_deps = "[colorama,jupyter]"
-else:
-    extra_deps = "[colorama]"
+extra_deps = "[colorama,jupyter]" if JUPYTER else "[colorama]"
 if version_specifier:
     req = f"black{extra_deps}{version_specifier}"
 else:

@@ -31,19 +31,18 @@ class BlackVersion(NamedTuple):
 
 
 def get_pypi_download_url(package: str, version: Optional[str]) -> str:
-    with urlopen(PYPI_INSTANCE + f"/{package}/json") as page:
+    with urlopen(f"{PYPI_INSTANCE}/{package}/json") as page:
         metadata = json.load(page)
 
     if version is None:
         sources = metadata["urls"]
+    elif version in metadata["releases"]:
+        sources = metadata["releases"][version]
     else:
-        if version in metadata["releases"]:
-            sources = metadata["releases"][version]
-        else:
-            raise ValueError(
-                f"No releases found with version ('{version}') tag. "
-                f"Found releases: {metadata['releases'].keys()}"
-            )
+        raise ValueError(
+            f"No releases found with version ('{version}') tag. "
+            f"Found releases: {metadata['releases'].keys()}"
+        )
 
     for source in sources:
         if source["python_version"] == "source":

@@ -18,15 +18,10 @@ import itertools
 import logging
 import re
 from functools import lru_cache
-from typing import TYPE_CHECKING, FrozenSet, List, Set
+from typing import TYPE_CHECKING, Any
 
 import pytest
-
-try:
-    from pytest import StashKey
-except ImportError:
-    # pytest < 7
-    from _pytest.store import StoreKey as StashKey  # type: ignore[import, no-redef]
+from pytest import StashKey
 
 log = logging.getLogger(__name__)
 
@@ -38,8 +33,8 @@ if TYPE_CHECKING:
     from _pytest.nodes import Node
 
 
-ALL_POSSIBLE_OPTIONAL_MARKERS = StashKey[FrozenSet[str]]()
-ENABLED_OPTIONAL_MARKERS = StashKey[FrozenSet[str]]()
+ALL_POSSIBLE_OPTIONAL_MARKERS = StashKey[frozenset[str]]()
+ENABLED_OPTIONAL_MARKERS = StashKey[frozenset[str]]()
 
 
 def pytest_addoption(parser: "Parser") -> None:
@@ -59,13 +54,27 @@ def pytest_configure(config: "Config") -> None:
 
     Use the syntax in https://docs.pytest.org/en/stable/mark.html#registering-marks.
     """
-    ot_ini = config.inicfg.get("optional-tests") or []
-    ot_markers = set()
-    ot_run: Set[str] = set()
-    if isinstance(ot_ini, str):
-        ot_ini = ot_ini.strip().split("\n")
+    # Extract the configured optional-tests from pytest's ini config in a
+    # version-agnostic way. Depending on pytest version, the value can be a
+    # string, a list of strings, or a ConfigValue wrapper (with a `.value` attr).
+    raw_ot_ini: Any = config.inicfg.get("optional-tests")
+    ot_ini_lines: list[str] = []
+    if raw_ot_ini:
+        value = getattr(raw_ot_ini, "value", raw_ot_ini)
+        if isinstance(value, str):
+            ot_ini_lines = value.strip().split("\n")
+        elif isinstance(value, list):
+            # Best-effort coercion to strings; pytest inis are textual.
+            ot_ini_lines = [str(v) for v in value]
+        else:
+            # Fallback: ignore unexpected shapes (non-iterable, etc.).
+            ot_ini_lines = []
+
+    ot_markers: set[str] = set()
+    ot_run: set[str] = set()
     marker_re = re.compile(r"^\s*(?P<no>no_)?(?P<marker>\w+)(:\s*(?P<description>.*))?")
-    for ot in ot_ini:
+    # Iterate over configured markers discovered above.
+    for ot in ot_ini_lines:
         m = marker_re.match(ot)
         if not m:
             raise ValueError(f"{ot!r} doesn't match pytest marker syntax")
@@ -85,7 +94,7 @@ def pytest_configure(config: "Config") -> None:
     ot_run |= {no(excluded) for excluded in ot_markers - ot_run}
     ot_markers |= {no(m) for m in ot_markers}
 
-    log.info("optional tests to run:", ot_run)
+    log.info("optional tests to run: %s", ot_run)
     unknown_tests = ot_run - ot_markers
     if unknown_tests:
         raise ValueError(f"Unknown optional tests wanted: {unknown_tests!r}")
@@ -95,7 +104,7 @@ def pytest_configure(config: "Config") -> None:
     store[ENABLED_OPTIONAL_MARKERS] = frozenset(ot_run)
 
 
-def pytest_collection_modifyitems(config: "Config", items: "List[Node]") -> None:
+def pytest_collection_modifyitems(config: "Config", items: "list[Node]") -> None:
     store = config._store
     all_possible_optional_markers = store[ALL_POSSIBLE_OPTIONAL_MARKERS]
     enabled_optional_markers = store[ENABLED_OPTIONAL_MARKERS]
@@ -107,17 +116,17 @@ def pytest_collection_modifyitems(config: "Config", items: "List[Node]") -> None
             optional_markers_on_test & enabled_optional_markers
         ):
             continue
-        log.info("skipping non-requested optional", item)
+        log.info("skipping non-requested optional: %s", item)
         item.add_marker(skip_mark(frozenset(optional_markers_on_test)))
 
 
-@lru_cache()
-def skip_mark(tests: FrozenSet[str]) -> "MarkDecorator":
+@lru_cache
+def skip_mark(tests: frozenset[str]) -> "MarkDecorator":
     names = ", ".join(sorted(tests))
     return pytest.mark.skip(reason=f"Marked with disabled optional tests ({names})")
 
 
-@lru_cache()
+@lru_cache
 def no(name: str) -> str:
     if name.startswith("no_"):
         return name[len("no_") :]

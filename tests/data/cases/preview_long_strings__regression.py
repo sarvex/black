@@ -1,4 +1,4 @@
-# flags: --preview
+# flags: --unstable
 class A:
     def foo():
         result = type(message)("")
@@ -552,6 +552,7 @@ a_dict = {
 }
 
 # Regression test for https://github.com/psf/black/issues/3506.
+# Regressed again by https://github.com/psf/black/pull/4498
 s = (
     "With single quote: ' "
     f" {my_dict['foo']}"
@@ -611,14 +612,13 @@ class A:
 
 class A:
     def foo():
-        XXXXXXXXXXXX.append(
-            (
-                "xxx_xxxxxxxxxx(xxxxx={}, xxxx={}, xxxxx, xxxx_xxxx_xxxxxxxxxx={})"
-                .format(xxxxx, xxxx, xxxx_xxxx_xxxxxxxxxx),
-                my_var,
-                my_other_var,
-            )
-        )
+        XXXXXXXXXXXX.append((
+            "xxx_xxxxxxxxxx(xxxxx={}, xxxx={}, xxxxx, xxxx_xxxx_xxxxxxxxxx={})".format(
+                xxxxx, xxxx, xxxx_xxxx_xxxxxxxxxx
+            ),
+            my_var,
+            my_other_var,
+        ))
 
 
 class A:
@@ -1240,9 +1240,15 @@ a_dict = {
 }
 
 # Regression test for https://github.com/psf/black/issues/3506.
-s = f"With single quote: '  {my_dict['foo']} With double quote: \"  {my_dict['bar']}"
+# Regressed again by https://github.com/psf/black/pull/4498
+s = (
+    "With single quote: ' "
+    f" {my_dict['foo']}"
+    ' With double quote: " '
+    f' {my_dict["bar"]}'
+)
 
 s = (
     "Lorem Ipsum is simply dummy text of the printing and typesetting"
-    f" industry:'{my_dict['foo']}'"
+    f' industry:\'{my_dict["foo"]}\''
 )

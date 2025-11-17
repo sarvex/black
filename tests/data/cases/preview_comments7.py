@@ -1,4 +1,4 @@
-# flags: --preview
+# flags: --unstable
 from .config import (
     Any,
     Bool,
@@ -176,7 +176,6 @@ from com.my_lovely_company.my_lovely_team.my_lovely_project.my_lovely_component 
 from com.my_lovely_company.my_lovely_team.my_lovely_project.my_lovely_component import (
     MyLovelyCompanyTeamProjectComponent as component,  # DRY
 )
-
 
 result = 1  # look ma, no comment migration xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 

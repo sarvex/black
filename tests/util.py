@@ -4,17 +4,19 @@ import os
 import shlex
 import sys
 import unittest
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
-from typing import Any, Iterator, List, Optional, Tuple
+from typing import Any
 
 import black
 from black.const import DEFAULT_LINE_LENGTH
 from black.debug import DebugVisitor
 from black.mode import TargetVersion
 from black.output import diff, err, out
+from black.ranges import parse_line_ranges
 
 from . import conftest
 
@@ -43,7 +45,9 @@ fs = partial(black.format_str, mode=DEFAULT_MODE)
 class TestCaseArgs:
     mode: black.Mode = field(default_factory=black.Mode)
     fast: bool = False
-    minimum_version: Optional[Tuple[int, int]] = None
+    minimum_version: tuple[int, int] | None = None
+    lines: Collection[tuple[int, int]] = ()
+    no_preview_line_length_1: bool = False
 
 
 def _assert_format_equal(expected: str, actual: str) -> None:
@@ -92,7 +96,9 @@ def assert_format(
     mode: black.Mode = DEFAULT_MODE,
     *,
     fast: bool = False,
-    minimum_version: Optional[Tuple[int, int]] = None,
+    minimum_version: tuple[int, int] | None = None,
+    lines: Collection[tuple[int, int]] = (),
+    no_preview_line_length_1: bool = False,
 ) -> None:
     """Convenience function to check that Black formats as expected.
 
@@ -101,50 +107,68 @@ def assert_format(
     separate from TargetVerson Mode configuration.
     """
     _assert_format_inner(
-        source, expected, mode, fast=fast, minimum_version=minimum_version
+        source, expected, mode, fast=fast, minimum_version=minimum_version, lines=lines
     )
 
     # For both preview and non-preview tests, ensure that Black doesn't crash on
     # this code, but don't pass "expected" because the precise output may differ.
     try:
+        if mode.unstable:
+            new_mode = replace(mode, unstable=False, preview=False)
+        else:
+            new_mode = replace(mode, preview=not mode.preview)
         _assert_format_inner(
             source,
             None,
-            replace(mode, preview=not mode.preview),
+            new_mode,
             fast=fast,
             minimum_version=minimum_version,
+            lines=lines,
         )
     except Exception as e:
-        text = "non-preview" if mode.preview else "preview"
+        text = (
+            "unstable"
+            if mode.unstable
+            else "non-preview" if mode.preview else "preview"
+        )
         raise FormatFailure(
             f"Black crashed formatting this case in {text} mode."
         ) from e
     # Similarly, setting line length to 1 is a good way to catch
-    # stability bugs. But only in non-preview mode because preview mode
-    # currently has a lot of line length 1 bugs.
-    try:
-        _assert_format_inner(
-            source,
-            None,
-            replace(mode, preview=False, line_length=1),
-            fast=fast,
-            minimum_version=minimum_version,
-        )
-    except Exception as e:
-        raise FormatFailure(
-            "Black crashed formatting this case with line-length set to 1."
-        ) from e
+    # stability bugs. Some tests are known to be broken in preview mode with line length
+    # of 1 though, and have marked that with a flag --no-preview-line-length-1
+    preview_modes = [False]
+    if not no_preview_line_length_1:
+        preview_modes.append(True)
+
+    for preview_mode in preview_modes:
+
+        try:
+            _assert_format_inner(
+                source,
+                None,
+                replace(mode, preview=preview_mode, line_length=1, unstable=False),
+                fast=fast,
+                minimum_version=minimum_version,
+                lines=lines,
+            )
+        except Exception as e:
+            text = "preview" if preview_mode else "non-preview"
+            raise FormatFailure(
+                f"Black crashed formatting this case in {text} mode with line-length=1."
+            ) from e
 
 
 def _assert_format_inner(
     source: str,
-    expected: Optional[str] = None,
+    expected: str | None = None,
     mode: black.Mode = DEFAULT_MODE,
     *,
     fast: bool = False,
-    minimum_version: Optional[Tuple[int, int]] = None,
+    minimum_version: tuple[int, int] | None = None,
+    lines: Collection[tuple[int, int]] = (),
 ) -> None:
-    actual = black.format_str(source, mode=mode)
+    actual = black.format_str(source, mode=mode, lines=lines)
     if expected is not None:
         _assert_format_equal(expected, actual)
     # It's not useful to run safety checks if we're expecting no changes anyway. The
@@ -156,7 +180,7 @@ def _assert_format_inner(
         # when checking modern code on older versions.
         if minimum_version is None or sys.version_info >= minimum_version:
             black.assert_equivalent(source, actual)
-        black.assert_stable(source, actual, mode=mode)
+        black.assert_stable(source, actual, mode=mode, lines=lines)
 
 
 def dump_to_stderr(*output: str) -> str:
@@ -172,7 +196,7 @@ def get_base_dir(data: bool) -> Path:
     return DATA_DIR if data else PROJECT_ROOT
 
 
-def all_data_cases(subdir_name: str, data: bool = True) -> List[str]:
+def all_data_cases(subdir_name: str, data: bool = True) -> list[str]:
     cases_dir = get_base_dir(data) / subdir_name
     assert cases_dir.is_dir()
     return [case_path.stem for case_path in cases_dir.iterdir()]
@@ -191,29 +215,29 @@ def get_case_path(
 
 def read_data_with_mode(
     subdir_name: str, name: str, data: bool = True
-) -> Tuple[TestCaseArgs, str, str]:
+) -> tuple[TestCaseArgs, str, str]:
     """read_data_with_mode('test_name') -> Mode(), 'input', 'output'"""
     return read_data_from_file(get_case_path(subdir_name, name, data))
 
 
-def read_data(subdir_name: str, name: str, data: bool = True) -> Tuple[str, str]:
+def read_data(subdir_name: str, name: str, data: bool = True) -> tuple[str, str]:
     """read_data('test_name') -> 'input', 'output'"""
     _, input, output = read_data_with_mode(subdir_name, name, data)
     return input, output
 
 
-def _parse_minimum_version(version: str) -> Tuple[int, int]:
+def _parse_minimum_version(version: str) -> tuple[int, int]:
     major, minor = version.split(".")
     return int(major), int(minor)
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_flags_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--target-version",
-        action="append",
-        type=lambda val: TargetVersion[val.upper()],
+        action="store",
+        type=lambda val: (TargetVersion[val.upper()],),
         default=(),
     )
     parser.add_argument("--line-length", default=DEFAULT_LINE_LENGTH, type=int)
@@ -226,6 +250,7 @@ def get_flags_parser() -> argparse.ArgumentParser:
         "--skip-magic-trailing-comma", default=False, action="store_true"
     )
     parser.add_argument("--preview", default=False, action="store_true")
+    parser.add_argument("--unstable", default=False, action="store_true")
     parser.add_argument("--fast", default=False, action="store_true")
     parser.add_argument(
         "--minimum-version",
@@ -233,10 +258,20 @@ def get_flags_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Minimum version of Python where this test case is parseable. If this is"
-            " set, the test case will be run twice: once with the specified"
+            " set, the test case will be run twice: once without the specified"
             " --target-version, and once with --target-version set to exactly the"
             " specified version. This ensures that Black's autodetection of the target"
             " version works correctly."
+        ),
+    )
+    parser.add_argument("--line-ranges", action="append")
+    parser.add_argument(
+        "--no-preview-line-length-1",
+        default=False,
+        action="store_true",
+        help=(
+            "Don't run in preview mode with --line-length=1, as that's known to cause a"
+            " crash"
         ),
     )
     return parser
@@ -253,20 +288,37 @@ def parse_mode(flags_line: str) -> TestCaseArgs:
         is_ipynb=args.ipynb,
         magic_trailing_comma=not args.skip_magic_trailing_comma,
         preview=args.preview,
+        unstable=args.unstable,
     )
-    return TestCaseArgs(mode=mode, fast=args.fast, minimum_version=args.minimum_version)
+    if args.line_ranges:
+        lines = parse_line_ranges(args.line_ranges)
+    else:
+        lines = []
+    return TestCaseArgs(
+        mode=mode,
+        fast=args.fast,
+        minimum_version=args.minimum_version,
+        lines=lines,
+        no_preview_line_length_1=args.no_preview_line_length_1,
+    )
 
 
-def read_data_from_file(file_name: Path) -> Tuple[TestCaseArgs, str, str]:
-    with open(file_name, "r", encoding="utf8") as test:
+def read_data_from_file(file_name: Path) -> tuple[TestCaseArgs, str, str]:
+    with open(file_name, encoding="utf8") as test:
         lines = test.readlines()
-    _input: List[str] = []
-    _output: List[str] = []
+    _input: list[str] = []
+    _output: list[str] = []
     result = _input
     mode = TestCaseArgs()
     for line in lines:
         if not _input and line.startswith("# flags: "):
             mode = parse_mode(line[len("# flags: ") :])
+            if mode.lines:
+                # Retain the `# flags: ` line when using --line-ranges=. This requires
+                # the `# output` section to also include this line, but retaining the
+                # line is important to make the line ranges match what you see in the
+                # test file.
+                result.append(line)
             continue
         line = line.replace(EMPTY_LINE, "")
         if line.rstrip() == "# output":

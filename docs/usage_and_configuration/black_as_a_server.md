@@ -27,12 +27,28 @@ formatting requests.
 
 ```
 
-There is no official `blackd` client tool (yet!). You can test that blackd is working
-using `curl`:
+You can test that blackd is working using `curl`:
 
 ```sh
 blackd --bind-port 9090 &  # or let blackd choose a port
 curl -s -XPOST "localhost:9090" -d "print('valid')"
+```
+
+Or using the python client:
+
+```python
+import asyncio
+
+from blackd.client import BlackDClient
+
+async def main():
+    client = BlackDClient(url="http://127.0.0.1:9090")
+    unformatted_code = "def hello(): print('Hello, World!')"
+    formatted_code = await client.format_code(unformatted_code)
+    print(formatted_code)
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ## Protocol
@@ -62,6 +78,12 @@ The headers controlling how source code is formatted are:
 - `X-Preview`: corresponds to the `--preview` command line flag. If present and its
   value is not an empty string, experimental and potentially disruptive style changes
   will be used.
+- `X-Unstable`: corresponds to the `--unstable` command line flag. If present and its
+  value is not an empty string, experimental style changes that are known to be buggy
+  will be used.
+- `X-Enable-Unstable-Feature`: corresponds to the `--enable-unstable-feature` flag. The
+  contents of the flag must be a comma-separated list of unstable features to be
+  enabled. Example: `X-Enable-Unstable-Feature: feature1, feature2`.
 - `X-Fast-Or-Safe`: if set to `fast`, `blackd` will act as _Black_ does when passed the
   `--fast` command line flag.
 - `X-Python-Variant`: if set to `pyi`, `blackd` will act as _Black_ does when passed the
